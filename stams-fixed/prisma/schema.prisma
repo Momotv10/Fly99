@@ -1,0 +1,274 @@
+
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════
+// 1. USER MANAGEMENT & AUTHENTICATION
+// ═══════════════════════════════════════════════════════════
+
+enum UserRole {
+  ADMIN              // مدير النظام
+  AGENT              // موظف الحجوزات
+  SUPPLIER           // مزود الخدمة
+  CUSTOMER           // العميل
+  ACCOUNTANT         // المحاسب
+}
+
+model User {
+  id            String      @id @default(uuid())
+  email         String      @unique
+  password      String
+  fullName      String
+  phone         String?
+  role          UserRole    @default(CUSTOMER)
+  isActive      Boolean     @default(true)
+  emailVerified Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  // Relations
+  bookings      Booking[]
+  transactions  Transaction[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+// ═══════════════════════════════════════════════════════════
+// 2. FLIGHT INVENTORY & SCHEDULING
+// ═══════════════════════════════════════════════════════════
+
+enum FlightStatus {
+  SCHEDULED
+  DELAYED
+  DEPARTED
+  ARRIVED
+  CANCELLED
+}
+
+model Flight {
+  id              String        @id @default(uuid())
+  flightNumber    String        @unique
+  airline         String
+  origin          String
+  destination     String
+  departureTime   DateTime
+  arrivalTime     DateTime
+  aircraft        String
+  capacity        Int
+  availableSeats  Int
+  basePrice       Decimal       @db.Decimal(10, 2)
+  status          FlightStatus  @default(SCHEDULED)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  bookings        Booking[]
+
+  @@index([departureTime])
+  @@index([origin, destination])
+  @@map("flights")
+}
+
+// ═══════════════════════════════════════════════════════════
+// 3. BOOKING MANAGEMENT
+// ═══════════════════════════════════════════════════════════
+
+enum BookingStatus {
+  PENDING        // قيد الانتظار
+  CONFIRMED      // مؤكد
+  CANCELLED      // ملغي
+  COMPLETED      // مكتمل
+  REFUNDED       // مسترجع
+}
+
+enum PassengerType {
+  ADULT
+  CHILD
+  INFANT
+}
+
+model Booking {
+  id              String         @id @default(uuid())
+  bookingRef      String         @unique
+  userId          String
+  flightId        String
+  passengerName   String
+  passengerEmail  String
+  passengerPhone  String
+  passportNumber  String?
+  passengerType   PassengerType  @default(ADULT)
+  seatNumber      String?
+  totalPrice      Decimal        @db.Decimal(10, 2)
+  status          BookingStatus  @default(PENDING)
+  bookedAt        DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  user            User           @relation(fields: [userId], references: [id])
+  flight          Flight         @relation(fields: [flightId], references: [id])
+  transactions    Transaction[]
+
+  @@index([userId])
+  @@index([flightId])
+  @@index([bookingRef])
+  @@map("bookings")
+}
+
+// ═══════════════════════════════════════════════════════════
+// 4. FINANCIAL SYSTEM (Double-Entry Accounting)
+// ═══════════════════════════════════════════════════════════
+
+enum TransactionType {
+  BOOKING_PAYMENT      // دفع حجز
+  REFUND               // استرجاع
+  COMMISSION           // عمولة
+  SUPPLIER_PAYMENT     // دفع للمورد
+  CANCELLATION_FEE     // رسوم إلغاء
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+model Transaction {
+  id              String            @id @default(uuid())
+  userId          String
+  bookingId       String?
+  type            TransactionType
+  amount          Decimal           @db.Decimal(10, 2)
+  currency        String            @default("USD")
+  status          TransactionStatus @default(PENDING)
+  paymentMethod   String?           // بطاقة ائتمان، كاش، تحويل بنكي
+  reference       String?           // رقم مرجعي خارجي
+  description     String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  // Relations
+  user            User              @relation(fields: [userId], references: [id])
+  booking         Booking?          @relation(fields: [bookingId], references: [id])
+  journalEntries  JournalEntry[]
+
+  @@index([userId])
+  @@index([bookingId])
+  @@map("transactions")
+}
+
+enum AccountType {
+  ASSET          // أصول
+  LIABILITY      // التزامات
+  EQUITY         // حقوق ملكية
+  REVENUE        // إيرادات
+  EXPENSE        // مصروفات
+}
+
+model Account {
+  id              String         @id @default(uuid())
+  code            String         @unique
+  name            String
+  type            AccountType
+  parentId        String?
+  isActive        Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  parent          Account?       @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children        Account[]      @relation("AccountHierarchy")
+  journalEntries  JournalEntry[]
+
+  @@map("accounts")
+}
+
+enum EntryType {
+  DEBIT          // مدين
+  CREDIT         // دائن
+}
+
+model JournalEntry {
+  id              String        @id @default(uuid())
+  transactionId   String
+  accountId       String
+  entryType       EntryType
+  amount          Decimal       @db.Decimal(10, 2)
+  description     String?
+  createdAt       DateTime      @default(now())
+
+  // Relations
+  transaction     Transaction   @relation(fields: [transactionId], references: [id])
+  account         Account       @relation(fields: [accountId], references: [id])
+
+  @@index([transactionId])
+  @@index([accountId])
+  @@map("journal_entries")
+}
+
+// ═══════════════════════════════════════════════════════════
+// 5. NOTIFICATIONS & REAL-TIME UPDATES
+// ═══════════════════════════════════════════════════════════
+
+enum NotificationType {
+  BOOKING_CONFIRMATION
+  FLIGHT_UPDATE
+  PAYMENT_RECEIVED
+  CANCELLATION
+  SYSTEM_ALERT
+}
+
+model Notification {
+  id              String            @id @default(uuid())
+  userId          String
+  type            NotificationType
+  title           String
+  message         String
+  isRead          Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+
+  // Relations
+  user            User              @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+// ═══════════════════════════════════════════════════════════
+// 6. WHATSAPP BUSINESS INTEGRATION
+// ═══════════════════════════════════════════════════════════
+
+model WhatsAppSession {
+  id              String    @id @default(uuid())
+  phoneNumber     String    @unique
+  sessionData     String    // JSON data for WhatsApp session
+  lastMessageAt   DateTime  @default(now())
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("whatsapp_sessions")
+}
+
+model WhatsAppMessage {
+  id              String    @id @default(uuid())
+  phoneNumber     String
+  direction       String    // inbound, outbound
+  messageType     String    // text, image, document
+  content         String
+  status          String    // sent, delivered, read, failed
+  whatsappId      String?   // WhatsApp message ID
+  createdAt       DateTime  @default(now())
+
+  @@index([phoneNumber])
+  @@index([createdAt])
+  @@map("whatsapp_messages")
+}
