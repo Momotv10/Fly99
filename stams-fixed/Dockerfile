@@ -4,14 +4,14 @@ LABEL "framework"="nest.js"
 
 WORKDIR /app
 
-COPY package*.json ./
-COPY prisma ./prisma/
+COPY stams-fixed/package.json ./
+COPY stams-fixed/prisma ./prisma/
 
-RUN npm ci
+RUN npm install
 
-COPY tsconfig*.json ./
-COPY nest-cli.json ./
-COPY src ./src
+COPY stams-fixed/tsconfig*.json ./
+COPY stams-fixed/nest-cli.json ./
+COPY stams-fixed/src ./src
 
 RUN npx prisma generate
 RUN npm run build
@@ -20,8 +20,8 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm ci --only=production
+COPY stams-fixed/package.json ./
+RUN npm install --omit=dev
 
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/dist ./dist
